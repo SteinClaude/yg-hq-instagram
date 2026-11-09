@@ -1,0 +1,102 @@
+name: Plaatsen op Instagram (@ygdigital.nl)
+
+on:
+  schedule:
+    # Elk uur. De tijden in planning.json staan in Amsterdamse tijd;
+    # het script rekent dat zelf om, dus zomertijd maakt niet uit.
+    - cron: '5 * * * *'
+  workflow_dispatch:          # knop om het met de hand te draaien
+    inputs:
+      proefvideo:
+        description: 'Proef: adres van een video die Instagram moet ophalen (er wordt niets geplaatst)'
+        required: false
+        default: ''
+      proefomslag:
+        description: 'Proef: adres van een eigen omslag (jpg) bij die video; leeg = geen'
+        required: false
+        default: ''
+      proefms:
+        description: 'Proef: omslagmoment in milliseconden; leeg = 4000'
+        required: false
+        default: ''
+
+permissions:
+  contents: write             # om gedaan.json terug te schrijven
+  issues: write               # om te waarschuwen als de sleutel verloopt
+
+concurrency:
+  group: plaatsen             # nooit twee runs tegelijk
+  cancel-in-progress: false
+
+jobs:
+  plaatsen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Plaatsen wat aan de beurt is
+        if: github.event.inputs.proefvideo == ''
+        env:
+          IG_TOKEN: ${{ secrets.IG_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          REPO_RAW: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}
+        run: node src/plaatsen.cjs
+
+      # Met de hand: Actions > Run workflow > adres van een video invullen. Zet een
+      # reel klaar bij Instagram zonder te publiceren, om te zien of hij geaccepteerd wordt.
+      - name: Proef met een video (er wordt niets geplaatst)
+        if: github.event.inputs.proefvideo != ''
+        env:
+          IG_TOKEN: ${{ secrets.IG_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          REPO_RAW: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}
+          PROEF_VIDEO: ${{ github.event.inputs.proefvideo }}
+          PROEF_OMSLAG: ${{ github.event.inputs.proefomslag }}
+          PROEF_MS: ${{ github.event.inputs.proefms }}
+        run: node src/plaatsen.cjs --proefvideo "$PROEF_VIDEO" ${PROEF_OMSLAG:+--proefomslag "$PROEF_OMSLAG"} ${PROEF_MS:+--proefms "$PROEF_MS"}
+
+      # Deze stap mag NOOIT klappen. Gebeurt dat toch, dan wordt gedaan.json niet
+      # bewaard, denkt de volgende run dat er nog niets geplaatst is en gaat
+      # hetzelfde bericht er nog een keer uit - elk uur opnieuw. Dat is op
+      # 15 september 2026 gebeurd: "git add sleutel.json" viel over een bestand
+      # dat er niet altijd is, en twee items zijn zesmaal geplaatst.
+      - name: Bijhouden wat geplaatst is
+        if: always()
+        run: |
+          bestanden=""
+          for f in gedaan.json sleutel.json status.json; do
+            [ -f "$f" ] && bestanden="$bestanden $f"
+          done
+          if [ -z "$bestanden" ] || [ -z "$(git status --porcelain $bestanden)" ]; then
+            echo "niets nieuws om te bewaren"
+            exit 0
+          fi
+          git config user.name  "YG plaatser"
+          git config user.email "actions@users.noreply.github.com"
+          git add $bestanden
+          git commit -m "geplaatst op $(TZ=Europe/Amsterdam date '+%d-%m-%Y %H:%M')"
+          # opnieuw proberen als er ondertussen iets anders is gepusht
+          for poging in 1 2 3; do
+            if git push; then exit 0; fi
+            echo "push mislukt, poging $poging; eerst ophalen"
+            git pull --rebase --autostash || true
+            sleep 3
+          done
+          echo "kon het logboek niet wegschrijven; volgende run probeert het opnieuw"
+
+      - name: Waarschuwen als de sleutel bijna verloopt
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f waarschuwing.txt ]; then
+            if [ -z "$(gh issue list --state open --search 'Sleutel vernieuwen in:title' --json number --jq '.[0].number')" ]; then
+              gh issue create --title "Sleutel vernieuwen" --body-file waarschuwing.txt
+            else
+              echo "melding staat al open"
+            fi
+          fi

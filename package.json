@@ -1,0 +1,16 @@
+{
+  "name": "yg-hq-instagram",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plaatst automatisch berichten op het Instagram-account @ygdigital.nl van YG Digital (YG Digital HQ)",
+  "scripts": {
+    "proef": "node src/plaatsen.cjs --proef",
+    "plaatsen": "node src/plaatsen.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}
